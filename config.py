@@ -1,0 +1,24 @@
+# coding=utf-8
+import os
+
+SECRET_KEY = 'e48709e38fccec94dca74478ec667a42b7fe357dc7d547ea'
+JSON_AS_ASCII = False
+TEMPLATES_AUTO_RELOAD = True
+MAX_CONTENT_LENGTH = 16  * 1024 * 1024
+UPLOAD_FOLDER = '/home/cxjt/uploads' #绝对路径
+EXPORT_FOLDER = '/home/cxjt/exports' #绝对路径
+TEMPLATE_FOLDER = '/home/cxjt/template' #绝对路径
+
+SQLALCHEMY_DATABASE_URI = 'oracle://cxjt:cxjt@127.0.0.1:1521/oradb'
+SQLALCHEMY_ECHO = True
+SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+BABEL_DEFAULT_LOCALE = 'zh'
+
+WTF_CSRF_ENABLED = False
+
+MEMCACHE_SERVERS = ['127.0.0.1:11211']
+
+WEIXIN_APPID = 'wxdc1b204e5e7e5b24'
+WEIXIN_APPSECRET = '9277382617e391a42562566aa1a3ced2'
+WEIXIN_TOKEN = 'jtlAZNTxRFEJiy1DveopucYBVwUm60q8'
