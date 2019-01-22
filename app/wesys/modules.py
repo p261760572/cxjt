@@ -1,5 +1,6 @@
 # coding=utf-8
 import datetime
+from decimal import Decimal
 import json
 import os
 import re
@@ -9,7 +10,7 @@ import copy
 import cx_Oracle
 import xlrd
 import xlutils.copy
-from openpyxl import load_workbook
+from openpyxl import load_workbook,Workbook, worksheet
 
 from app import utils, app
 from app.gateway import hntl
@@ -49,7 +50,8 @@ class Module():
             "import_xls": self.import_xls,
             "zip": self.zip,
             "change_password": self.change_password,
-            "hntl_gateway": self.hntl_gateway
+            "hntl_gateway": self.hntl_gateway,
+            "dynamic_sheet": self.dynamic_sheet
         }
 
     def reload(self):
@@ -601,7 +603,7 @@ class Module():
 
         def _get_sheet(wb, index):
             if is_xls:
-                ws = wb.get_sheet(int(params[i + 1]))
+                ws = wb.get_sheet(index)
             else:
                 sheets = wb.get_sheet_names()
                 ws = wb.get_sheet_by_name(sheets[index])
@@ -928,6 +930,173 @@ class Module():
         return 0
 
 
+    def dynamic_sheet(self, ctx, step, request_data, response_data):
+        if not isinstance(request_data, list):
+            raise WesysException(errors.ERROR_MODULE_PARAM_ERROR)
+
+        if not self.test_value(ctx, step["test"]):
+            return 0
+
+        if len(request_data) == 0:
+            raise WesysException(errors.ERROR_MODULE_CONFIG_ERROR)
+
+        logger.debug(json.dumps(request_data, ensure_ascii=False))
+        params = step["param_list"].split(",")
+        params_len = len(params)
+
+        if params_len < 1:
+            raise WesysException(errors.ERROR_MODULE_CONFIG_ERROR)
+
+        prefix = params[0]
+
+        def _create_workbook():
+            if is_xls:
+                wb = xlwt.Workbook()
+            else:
+                wb = Workbook()
+            return wb
+
+        def _create_sheet(wb, sheet_name, index=None):
+            if is_xls:
+                ws = wb.add_sheet(sheet_name,cell_overwrite_ok=True)
+            else:
+                if index is not None:
+                    ws = wb.create_sheet(sheet_name, 0)
+                else:
+                    ws = wb.create_sheet(sheet_name)
+            return ws
+
+        def _load_workbook(template_filename):
+            if is_xls:
+                rb = xlrd.open_workbook(template_filename, formatting_info=True, on_demand=True)
+                wb = xlutils.copy.copy(rb)
+            else:
+                wb = load_workbook(template_filename)
+
+            return wb
+
+        def _get_sheet(wb, index):
+            if is_xls:
+                ws = wb.get_sheet(index)
+            else:
+                sheets = wb.get_sheet_names()
+                ws = wb.get_sheet_by_name(sheets[index])
+            return ws
+
+        def _get_sheet_num(wb):
+            if is_xls:
+                s_n = len(wb.sheets())
+            else:
+                s_n = len(wb.get_sheet_names())
+
+            return s_n
+
+        def _remove_sheet(wb, index):
+            ws = _get_sheet(wb, index)
+            wb.remove_sheet(ws)
+
+        def _set_sheet_name(ws, name):
+            if is_xls:
+                ws.name = name
+            else:
+                ws.title = name
+
+        def _write_row(ws, r, c, row):
+            if is_xls:
+                i = c
+                for col in row:
+                    ws.write(r, i, col)
+                    i += 1
+            else:
+                r += 1
+                i = c + 1
+                for col in row:
+                    ws.cell(row=r, column=i, value=col)
+                    i += 1
+
+     ##   is_xls = template_filename.endswith(".xls")
+
+        is_xls = False
+        if is_xls:
+            filename, url = self._generate_file(prefix, ".xls")
+        else:
+            filename, url = self._generate_file(prefix, ".xlsx")
+
+
+   #     wb = _create_workbook()
+        index = 0
+        for loop in request_data:
+            ctx.set(loop)
+            sql, bind = self._sql.generate_sql(ctx, loop.get("loop_id"))
+            cur = ctx.conn.cursor()
+
+            template = loop.get("template")
+            template_filename = os.path.join(app.config["TEMPLATE_FOLDER"], template)
+            wb = _load_workbook(template_filename)
+
+            try:
+                logger.info(parser.generate_print_sql(sql, bind))
+                cur.execute(sql, bind)
+                while True:
+                    sheet_loops = cur.fetchmany(100)
+                    if len(sheet_loops) == 0:
+                        break
+
+                    for sheet_loop in sheet_loops:
+                        r = loop.get("start_row")
+                        c = loop.get("start_col")
+
+                        cols = [d[0].lower() for d in cur.description]
+                        values = []
+                        for v in sheet_loop:
+                            # 解决日期类型的序列化问题
+                            if isinstance(v, datetime.datetime):
+                                v = v.strftime("%Y-%m-%d %H:%M:%S")
+                            elif isinstance(v, Decimal):
+                                v = float(v)
+                            values.append(v)
+                        sheet_loop = dict(zip(cols, values))
+
+                        ctx.update(sheet_loop)
+
+                        sheet_name = sheet_loop.get("sheet_name")
+                        #ws = _create_sheet(wb, sheet_name)
+                        ws = _get_sheet(wb, index)
+                        _set_sheet_name(ws, sheet_name)
+
+                        sql2, bind2 = self._sql.generate_sql(ctx, loop.get("sql_id"))
+                        cur2 = ctx.conn.cursor()
+                        try:
+                            logger.info(parser.generate_print_sql(sql2, bind2))
+                            cur2.execute(sql2, bind2)
+                            while True:
+                                rows = cur2.fetchmany(100)
+                                if len(rows) == 0:
+                                    break
+
+                                for row in rows:
+                                    _write_row(ws, r, c, row)
+                                    r += 1
+                        finally:
+                            cur2.close()
+                            index += 1
+            finally:
+                cur.close()
+
+        s_n = _get_sheet_num(wb)
+        for i in range(index, s_n):
+            _remove_sheet(wb, index)
+        wb.save(filename)
+
+        temp = response_data.get("url")
+        if temp is None:
+            response_data["url"] = url
+        elif isinstance(temp, list):
+            temp.append(url)
+        else:
+            response_data["url"] = [temp, url]
+
+        return 0
 """
 def write_oper_log(ctx, step, request_data, response_data):
     bind = []

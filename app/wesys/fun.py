@@ -41,6 +41,9 @@ class FunCtx():
     def set(self, data):
         self.data = data
 
+    def update(self, data):
+        self.data.update(data)
+
     def get(self, name):
         if name.startswith("Current"):
             return self.current.get(name)
